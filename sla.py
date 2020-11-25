@@ -61,6 +61,9 @@ class SLA:
         return SLA.eval_piecewise(self.supply_x, self.value_y, supply)
 
     def plot_sla(self, filename: str):
+        '''
+        Figure 2
+        '''
         a, b = 0, max(self.x)
         x = np.arange(a, b, 1e-2)
         y = np.vectorize(lambda y : self.eval_sla(y))(x)
@@ -72,21 +75,26 @@ class SLA:
         plt.savefig(filename)
         plt.clf()
 
-    def plot_supply_value(self, filename: str, demand: float):
-        a, b = 0, 80
-
+    def compute_supply_value(self, demand: float):
         self.supply_x = [
-            (-np.log(1 - SLA.P) + xi * demand) / xi for xi in self.x
+            np.inf if xi == 0 else (-np.log(1 - SLA.P) + xi * demand) / xi
+            for xi in self.x
         ][::-1]
         self.value_y = [
             self.eval_exact_value(s, demand) * SLA.TAU / SLA.MONTH
             for s in self.supply_x
         ]
 
+    def plot_supply_value(self, filename: str, demand: float):
+        '''
+        Figure 4
+        '''
+        self.compute_supply_value(demand)
+
+        a, b = 0, 80
         x = np.arange(a, b, 1e-2)
         y = np.vectorize(lambda mu : SLA.eval_piecewise(self.supply_x, self.value_y, mu))(x)
-        print('supply', self.supply_x)
-        print('value', self.value_y)
+        
         plt.plot(x, y)
         plt.title(f'Supply Value Cruve')
         plt.xlabel('Supply in TCycles / Period')

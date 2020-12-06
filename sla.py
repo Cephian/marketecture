@@ -8,7 +8,6 @@ class SLA:
     percentile response time.
     '''
     P = 0.95
-    TAU = 10 # 10 minutes
     MONTH = 60 * 24 * 30 # minutes in 30 days
 
     def __init__(self, endpoints: List[Tuple[float, float]]):
@@ -75,13 +74,13 @@ class SLA:
         plt.savefig(filename)
         plt.clf()
 
-    def compute_supply_value(self, demand: float):
+    def compute_supply_value(self, demand: float, period_length):
         self.supply_x = [
             np.inf if xi == 0 else (-np.log(1 - SLA.P) + xi * demand) / xi
             for xi in self.x
         ][::-1]
         self.value_y = [
-            self.eval_exact_value(s, demand) * SLA.TAU / SLA.MONTH
+            self.eval_exact_value(s, demand) * period_length / SLA.MONTH
             for s in self.supply_x
         ]
 

@@ -39,6 +39,7 @@ class Market:
         for app_id, app in self.apps.items():
             if allow_holding and app.will_hold(self.current_time + self.period_length):
                 holding.append(app_id)
+        print('holding', holding)
 
         VCG = {}
         total_welfare, total_values = self.allocate_all_apps(holding)
@@ -58,12 +59,13 @@ class Market:
         return total_welfare, total_values, VCG
 
     def allocate_all_apps(self, holding=[]):
-        return self.market_allocate(self.apps, True, holding)
+        return self.market_allocate(True, [], holding)
 
     def allocate_without_app(self, id_to_exclude, holding=[]):
-        return self.market_allocate({app_id : app for app_id, app in self.apps.items() if app_id != id_to_exclude}, False, holding)
+        #{app_id : app for app_id, app in self.apps.items() if app_id != id_to_exclude}
+        return self.market_allocate(False, [id_to_exclude], holding)
 
-    def market_allocate(self, applications, save_alloc=False, holding=[]):
+    def market_allocate(self, save_alloc=False, exclude_from_obj=[], holding=[]):
 
         solver = pywraplp.Solver.CreateSolver('SCIP')
         infinity = solver.infinity()
@@ -84,7 +86,7 @@ class Market:
         C_sold = {}
         C_unsold = {}
         C_partunsold = {}
-        for a, A in applications.items():
+        for a, A in self.apps.items():
             V[a] = solver.NumVar(0, infinity, f'V[{a}]')
             Q[a] = solver.NumVar(0, infinity, f'Q[{a}]')
     
@@ -143,7 +145,7 @@ class Market:
                 sum(self.CORES * M_sold[(g,f,t)] for f in range(self.M)) == 
                 sum(
                     C_sold[a][(g,f,t)] 
-                    for a, f in product(applications.keys(), range(self.M))
+                    for a, f in product(self.apps.keys(), range(self.M))
                 ) + C_partunsold[(g,t)]
             )
             solver.Add(
@@ -158,7 +160,7 @@ class Market:
                 )
             )
         for g, f in product(range(self.G), range(self.M)): # maintain consistency with current core states
-            solver.Add( sum( C_sold[a][(g,f,t)] for a, t in product(applications.keys(), range(self.M))) 
+            solver.Add( sum( C_sold[a][(g,f,t)] for a, t in product(self.apps.keys(), range(self.M))) 
                     + sum( C_unsold[(g,f,t)] for t in range(self.M) )
                     == C_current[(g, f)] )
 
@@ -187,7 +189,7 @@ class Market:
                 for g, f, t in product(range(self.G), range(self.M), range(self.M)) 
             ) + sum(
                 E_mult * E_core_active(g, self.period_length, t) * C_sold[a][(g,f,t)]
-                for a, g, f, t in product(applications.keys(), range(self.G), range(self.M), range(self.M)) 
+                for a, g, f, t in product(self.apps.keys(), range(self.G), range(self.M), range(self.M)) 
             )
         )
         solver.Add(
@@ -201,7 +203,7 @@ class Market:
         #print('Number of constraints =', solver.NumConstraints())
     
         solver.Maximize(
-            sum(V[a] for a in applications.keys()) - E_sold - H_sold
+            sum(V[a] for a in self.apps.keys() if a not in exclude_from_obj) - E_sold - H_sold
         )
     
         status = solver.Solve()
@@ -210,10 +212,10 @@ class Market:
             #print('Solution:')
             #print('Objective value =', solver.Objective().Value())
             if save_alloc:
-                for a, g, t in product(applications.keys(), range(self.G), range(self.M)): # will need to change for core holding
+                for a, g, t in product(self.apps.keys(), range(self.G), range(self.M)): # will need to change for core holding
                     self.current_core_allocation[a][(g,t)] = sum([C_sold[a][(g,f,t)].solution_value() for f in range(self.M)])
                     self.current_unsold_cores[(g,t)] = sum([C_unsold[(g,f,t)].solution_value() for f in range(self.M)])
-                for a, app in applications.items():
+                for a, app in self.apps.items():
                     app.current_cycles = Q[a].solution_value()
 
             return solver.Objective().Value(), {a : V[a].solution_value() for a in V}

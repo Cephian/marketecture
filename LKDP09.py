@@ -56,7 +56,9 @@ MACHINES = 2
 
 if __name__ == '__main__':
     market = Market(applications, G, M, CORES, MACHINES, gamma, delta, 10)
-    print(market.get_allocation_and_prices())
-    market.advance_time()
-    print(market.get_allocation_and_prices())
+    for i in range(2):
+        print(market.get_allocation_and_prices(False, True))
+        for app_id, app in applications.items():
+            print(app_id, app.current_cycles, app.current_price)        
+        market.advance_time()
 

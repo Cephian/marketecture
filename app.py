@@ -6,6 +6,7 @@ class App:
     def __init__(self, sla, demand_func=lambda t : random.choice([2, 10, 20, 30, 35, 70]), greedy_param=0):
         self.sla = sla
         self.demand_func = demand_func
+        self.greedy_param = greedy_param
         self.current_demand = None
 
         self.current_cycles = None
@@ -25,5 +26,5 @@ class App:
             expected_demand += self.demand_func(next_time)
         expected_demand /= TRIALS
 
-        surplus = sla.eval_exact_value(self.current_cycles, expected_demand) - self.current_price
-        return surplus >= greedy_param
+        surplus = self.sla.eval_exact_value(self.current_cycles, expected_demand) - self.current_price
+        return surplus >= self.greedy_param

@@ -148,7 +148,8 @@ class Market:
                 )
             )
         for g, f in product(range(self.G), range(self.M)): # maintain consistency with current core states
-            solver.Add(sum( C_sold[a][(g,f,t)] for a, t in product(applications.keys(), range(self.M)))
+            solver.Add( sum( C_sold[a][(g,f,t)] for a, t in product(applications.keys(), range(self.M))) 
+                    + sum( C_unsold[(g,f,t)] for t in range(self.M) )
                     == C_current[(g, f)] )
     
         # seller cost model

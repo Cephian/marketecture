@@ -23,38 +23,48 @@ class Market:
         self.current_core_allocation = { app_id : { (g,f) : 0 for g, f in product(range(self.G), range(self.M)) } for app_id in self.apps }
         self.current_unsold_cores = { (g,f) : (0 if f != 0 else self.CORES * self.MACHINES) for g, f in product(range(self.G), range(self.M)) }
 
-        self.saved_core_allocation = {}
-        self.saved_unsold_cores = {}
-
+    # use to advance the time to the next period
     def advance_time(self):
         self.current_time += self.period_length
         self.set_demands()
-
-        self.current_core_allocation = self.saved_core_allocation
-        self.current_unsold_cores = self.saved_unsold_cores
-        self.saved_core_allocation = {}
-        self.saved_unsold_cores = {}
 
     def set_demands(self):
         for app in self.apps.values():
             app.set_demand(self.current_time)
 
-    def get_VCG_allocation_and_prices(self):
+    # use to get the allocation and prices for the next period
+    # use_VCG_price is either true, false or a list of users who should use strategic pricing
+    def get_allocation_and_prices(self, use_VCG_price=False, allow_holding=False):
+        holding=[]
+        for app_id, app in self.apps.items():
+            if allow_holding and app.will_hold(self.current_time + self.period_length):
+                holding.append(app_id)
+
         VCG = {}
-        total_welfare, total_values = self.allocate_all_apps()
+        total_welfare, total_values = self.allocate_all_apps(holding)
         for app_id in self.apps:
-            welfare, values = self.allocate_without_app(app_id)
+            welfare, values = self.allocate_without_app(app_id, holding)
             price = welfare - (total_welfare - total_values[app_id])
             VCG[app_id] = price
+
+        for app_id in self.apps:
+            if app_id in holding: # don't change price if holding
+                continue
+            if (type(use_VCG_price) == bool and use_VCG_price) or (type(use_VCG_price) != bool and app_id in use_VCG_price):
+                self.apps[app_id].current_price = VCG[app_id]
+            else:
+                self.apps[app_id].current_price = total_values[app_id]
+
         return total_welfare, total_values, VCG
 
-    def allocate_all_apps(self):
-        return self.market_allocate(self.apps, True)
+    def allocate_all_apps(self, holding=[]):
+        return self.market_allocate(self.apps, True, holding)
 
-    def allocate_without_app(self, id_to_exclude):
-        return self.market_allocate({app_id : app for app_id, app in self.apps.items() if app_id != id_to_exclude})
+    def allocate_without_app(self, id_to_exclude, holding=[]):
+        return self.market_allocate({app_id : app for app_id, app in self.apps.items() if app_id != id_to_exclude}, False, holding)
 
-    def market_allocate(self, applications, save_alloc=False):
+    def market_allocate(self, applications, save_alloc=False, holding=[]):
+
         solver = pywraplp.Solver.CreateSolver('SCIP')
         infinity = solver.infinity()
 
@@ -151,6 +161,15 @@ class Market:
             solver.Add( sum( C_sold[a][(g,f,t)] for a, t in product(applications.keys(), range(self.M))) 
                     + sum( C_unsold[(g,f,t)] for t in range(self.M) )
                     == C_current[(g, f)] )
+
+        # keep allocation of those holding
+        for a in holding:
+            for g, f, t in product(range(self.G), range(self.M), range(self.M)):
+                if f == t:
+                    solver.Add( C_sold[a][(g,f,f)] == self.current_core_allocation[a][(g,f)] )
+                else:
+                    solver.Add( C_sold[a][(g,f,t)] == 0 )
+
     
         # seller cost model
         E_sold = solver.NumVar(0, infinity, 'E_sold')
@@ -191,11 +210,11 @@ class Market:
             #print('Solution:')
             #print('Objective value =', solver.Objective().Value())
             if save_alloc:
-                self.saved_core_allocation = { a : {} for a in applications.keys() }
-                self.saved_unsold_cores = {}
                 for a, g, t in product(applications.keys(), range(self.G), range(self.M)): # will need to change for core holding
-                    self.saved_core_allocation[a][(g,t)] = sum([C_sold[a][(g,f,t)].solution_value() for f in range(self.M)])
-                    self.saved_unsold_cores[(g,t)] = sum([C_unsold[(g,f,t)].solution_value() for f in range(self.M)])
+                    self.current_core_allocation[a][(g,t)] = sum([C_sold[a][(g,f,t)].solution_value() for f in range(self.M)])
+                    self.current_unsold_cores[(g,t)] = sum([C_unsold[(g,f,t)].solution_value() for f in range(self.M)])
+                for a, app in applications.items():
+                    app.current_cycles = Q[a].solution_value()
 
             return solver.Objective().Value(), {a : V[a].solution_value() for a in V}
         else:

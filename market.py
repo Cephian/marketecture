@@ -8,10 +8,10 @@ from ortools.linear_solver import pywraplp
 class Market:
     # TODO use a dictionary for params instead?
     def __init__(self, apps, G, M, CORES, MACHINES, gamma, delta, period_length=10):
-        self.G = G
-        self.M = M
-        self.CORES = CORES
-        self.MACHINES = MACHINES
+        self.G = G # number machine groups
+        self.M = M # number power modes, TODO change to be diff per group
+        self.CORES = CORES # number cores per machine in each group, TODO change to be diff per group
+        self.MACHINES = MACHINES # number total machines in each group, TODO change to be diff per group
         self.gamma = gamma
         self.delta = delta
         self.period_length = period_length
@@ -20,9 +20,20 @@ class Market:
         self.current_time = 0
         self.set_demands()
 
+        self.current_core_allocation = { app_id : { (g,f) : 0 for g, f in product(range(self.G), range(self.M)) } for app_id in self.apps }
+        self.current_unsold_cores = { (g,f) : (0 if f != 0 else self.CORES * self.MACHINES) for g, f in product(range(self.G), range(self.M)) }
+
+        self.saved_core_allocation = {}
+        self.saved_unsold_cores = {}
+
     def advance_time(self):
         self.current_time += self.period_length
         self.set_demands()
+
+        self.current_core_allocation = self.saved_core_allocation
+        self.current_unsold_cores = self.saved_unsold_cores
+        self.saved_core_allocation = {}
+        self.saved_unsold_cores = {}
 
     def set_demands(self):
         for app in self.apps.values():
@@ -38,14 +49,18 @@ class Market:
         return total_welfare, total_values, VCG
 
     def allocate_all_apps(self):
-        return self.market_allocate(self.apps)
+        return self.market_allocate(self.apps, True)
 
     def allocate_without_app(self, id_to_exclude):
         return self.market_allocate({app_id : app for app_id, app in self.apps.items() if app_id != id_to_exclude})
 
-    def market_allocate(self, applications):
+    def market_allocate(self, applications, save_alloc=False):
         solver = pywraplp.Solver.CreateSolver('SCIP')
         infinity = solver.infinity()
+
+        C_current = {}
+        for g, f in product(range(self.G), range(self.M)):
+            C_current[(g, f)] = sum([self.current_core_allocation[app_id][(g, f)] for app_id in self.apps]) + self.current_unsold_cores[(g, f)]
     
         #############################################
         # Define MIP
@@ -123,7 +138,7 @@ class Market:
             )
             solver.Add(
                 sum(self.CORES * M_unsold[(g,f,t)] for f in range(self.M)) == 
-                sum(C_unsold[(g,f,t)] for f in range(self.M)) + C_partunsold[(g,t)]
+                sum(C_unsold[(g,f,t)] for f in range(self.M)) - C_partunsold[(g,t)] # CHECK changed + to - here?
             )
         for g in range(self.G):
             solver.Add(
@@ -132,6 +147,9 @@ class Market:
                     for f, t in product(range(self.M), range(self.M))
                 )
             )
+        for g, f in product(range(self.G), range(self.M)): # maintain consistency with current core states
+            solver.Add(sum( C_sold[a][(g,f,t)] for a, t in product(applications.keys(), range(self.M)))
+                    == C_current[(g, f)] )
     
         # seller cost model
         E_sold = solver.NumVar(0, infinity, 'E_sold')
@@ -159,8 +177,8 @@ class Market:
             )
         )
     
-        print('Number of variables =', solver.NumVariables())
-        print('Number of constraints =', solver.NumConstraints())
+        #print('Number of variables =', solver.NumVariables())
+        #print('Number of constraints =', solver.NumConstraints())
     
         solver.Maximize(
             sum(V[a] for a in applications.keys()) - E_sold - H_sold
@@ -169,8 +187,15 @@ class Market:
         status = solver.Solve()
     
         if status == pywraplp.Solver.OPTIMAL:
-            print('Solution:')
-            print('Objective value =', solver.Objective().Value())
+            #print('Solution:')
+            #print('Objective value =', solver.Objective().Value())
+            if save_alloc:
+                self.saved_core_allocation = { a : {} for a in applications.keys() }
+                self.saved_unsold_cores = {}
+                for a, g, t in product(applications.keys(), range(self.G), range(self.M)): # will need to change for core holding
+                    self.saved_core_allocation[a][(g,t)] = sum([C_sold[a][(g,f,t)].solution_value() for f in range(self.M)])
+                    self.saved_unsold_cores[(g,t)] = sum([C_unsold[(g,f,t)].solution_value() for f in range(self.M)])
+
             return solver.Objective().Value(), {a : V[a].solution_value() for a in V}
         else:
             print('The problem does not have an optimal solution.')

@@ -54,17 +54,25 @@ class Market:
         # buyer valuation model
         V = {} # value provided to application a V = F(Q)
         Q = {} # cycles provided to application a
+        Q_seq = {} # sequential cycles provided to application a
+        Q_par = {} # parallel cycles provided to application a
         Z_seg = {} # segment indicator for piecewise linear function
         Q_seg = {} # segment value for piecewise linear function
         C_sold = {}
+        C_sold_seq = {} # sold cores used sequentially
+        C_sold_par = {} # sold cores used in parallel
         C_unsold = {}
         C_partunsold = {}
         for a, A in applications.items():
             V[a] = solver.NumVar(0, infinity, f'V[{a}]')
             Q[a] = solver.NumVar(0, infinity, f'Q[{a}]')
+            Q_seq[a] = solver.NumVar(0, infinity, f'Q_seq[{a}]')
+            Q_par[a] = solver.NumVar(0, infinity, f'Q_par[{a}]')
     
             # set measured application demand for A
-            #A.demand_estimate = random.choice([2, 10, 20, 30, 35, 70])
+            A.parallel_fraction = 1 / random.choice([1, 2, 10, 20, 30, 35, 70])
+            assert (0 <= A.parallel_fraction) and (A.parallel_fraction <= 1), \
+                'Parallel fraction of application must be in the interval [0, 1].'
             A.sla.compute_supply_value(A.current_demand, self.period_length)
     
             # auxiliary for computing V = F(Q)
@@ -96,10 +104,37 @@ class Market:
     
             # set Q
             C_sold[a] = {}
+            C_sold_seq[a] = {}
+            C_sold_par[a] = {}
             for g, f, t in product(range(self.G), range(self.M), range(self.M)):
                 C_sold[a][(g,f,t)] = solver.IntVar(0, infinity, f'C_sold[{a}][{(g,f,t)}]')
+                C_sold_seq[a][(g,f,t)] = solver.IntVar(0, infinity, f'C_sold_seq[{a}][{(g,f,t)}]')
+                C_sold_par[a][(g,f,t)] = solver.IntVar(0, infinity, f'C_sold_par[{a}][{(g,f,t)}]')
+
+                # partition sold cores into sequential and parallel
+                solver.Add(C_sold[a][(g,f,t)] == C_sold_seq[a][(g,f,t)] + C_sold_par[a][(g,f,t)])
+
+            # each application can use at most one core sequentially
             solver.Add(sum(
-                self.gamma(g, t) * (self.period_length - self.delta(g, f, t)) * C_sold[a][(g,f,t)]
+                C_sold_seq[a][(g,f,t)]
+                for g, f, t in product(range(self.G), range(self.M), range(self.M))
+            ) <= 1)
+
+            # set number of sequential cycles provided
+            solver.Add(sum(
+                self.gamma(g, t) * (self.period_length - self.delta(g, f, t)) * C_sold_seq[a][(g,f,t)]
+                for g, f, t in product(range(self.G), range(self.M), range(self.M))
+            ) == Q_seq[a])
+
+            # set number of parallel cycles provided
+            solver.Add(sum(
+                self.gamma(g, t) * (self.period_length - self.delta(g, f, t)) * C_sold_par[a][(g,f,t)]
+                for g, f, t in product(range(self.G), range(self.M), range(self.M))
+            ) == Q_par[a])
+            
+            # set number of cycles provided (approximate harmonic mean with arithmetic mean)
+            solver.Add(sum(
+                (1 - A.parallel_fraction) * Q_seq[a] + A.parallel_fraction * Q_par[a]
                 for g, f, t in product(range(self.G), range(self.M), range(self.M))
             ) == Q[a])
     

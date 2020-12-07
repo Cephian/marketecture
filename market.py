@@ -75,7 +75,6 @@ class Market:
         Q_seg = {} # segment value for piecewise linear function
         C_sold = {}
         C_sold_seq = {} # sold cores used sequentially
-        C_sold_par = {} # sold cores used in parallel
         C_unsold = {}
         C_partunsold = {}
         for a, A in applications.items():
@@ -120,14 +119,12 @@ class Market:
             # set Q
             C_sold[a] = {}
             C_sold_seq[a] = {}
-            C_sold_par[a] = {}
             for g, f, t in product(range(self.G), range(self.M), range(self.M)):
                 C_sold[a][(g,f,t)] = solver.IntVar(0, infinity, f'C_sold[{a}][{(g,f,t)}]')
-                C_sold_seq[a][(g,f,t)] = solver.IntVar(0, infinity, f'C_sold_seq[{a}][{(g,f,t)}]')
-                C_sold_par[a][(g,f,t)] = solver.IntVar(0, infinity, f'C_sold_par[{a}][{(g,f,t)}]')
+                C_sold_seq[a][(g,f,t)] = solver.IntVar(0, 1, f'C_sold_seq[{a}][{(g,f,t)}]')
 
-                # partition sold cores into sequential and parallel
-                solver.Add(C_sold[a][(g,f,t)] == C_sold_seq[a][(g,f,t)] + C_sold_par[a][(g,f,t)])
+                # need to have bought sequential core
+                solver.Add(C_sold_seq[a][(g,f,t)] <= C_sold[a][(g,f,t)])
 
             # each application can use at most one core sequentially
             solver.Add(sum(
@@ -143,11 +140,11 @@ class Market:
 
             # set number of parallel cycles provided
             solver.Add(sum(
-                self.gamma(g, t) * (self.period_length - self.delta(g, f, t)) * C_sold_par[a][(g,f,t)]
+                self.gamma(g, t) * (self.period_length - self.delta(g, f, t)) * C_sold[a][(g,f,t)]
                 for g, f, t in product(range(self.G), range(self.M), range(self.M))
             ) == Q_par[a])
             
-            # set number of cycles provided (approximate harmonic mean with arithmetic mean)
+            # set number of cycles provided (approximate Amdahl harmonic mean with arithmetic mean)
             solver.Add(sum(
                 (1 - A.parallel_fraction) * Q_seq[a] + A.parallel_fraction * Q_par[a]
                 for g, f, t in product(range(self.G), range(self.M), range(self.M))
@@ -173,7 +170,7 @@ class Market:
             )
             solver.Add(
                 sum(self.CORES * M_unsold[(g,f,t)] for f in range(self.M)) == 
-                sum(C_unsold[(g,f,t)] for f in range(self.M)) - C_partunsold[(g,t)] # CHECK changed + to - here?
+                sum(C_unsold[(g,f,t)] for f in range(self.M)) - C_partunsold[(g,t)]
             )
         for g in range(self.G):
             solver.Add(

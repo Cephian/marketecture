@@ -92,7 +92,7 @@ class SLA:
             for xi in self.x
         ][::-1]
         self.value_y = [
-            self.eval_exact_value(s, demand) * period_length / SLA.TIME_UNIT
+            self.eval_exact_value(s, demand) * (period_length / SLA.TIME_UNIT)
             for s in self.supply_x
         ]
 

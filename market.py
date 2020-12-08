@@ -70,7 +70,7 @@ class Market:
         # see if each user will hold their last period allocation
         holding=[]
         for app_id, app in self.apps.items():
-            if allow_holding and app.will_hold(self.current_time):
+            if allow_holding and app.will_hold(self.current_time, self.period_length):
                 holding.append(app_id)
 
         # realize the demands for the current time
@@ -289,7 +289,7 @@ class Market:
                 for a, g, t in product(self.apps.keys(), range(self.G), range(self.M)): # will need to change for core holding
                     self.saved_core_allocation[a][(g,t)] = sum([C_sold[a][(g,f,t)].solution_value() for f in range(self.M)])
                     self.saved_unsold_cores[(g,t)] = sum([C_unsold[(g,f,t)].solution_value() for f in range(self.M)])
-            return solver.Objective().Value(), {a : V[a].solution_value() for a in V}, {a : Q[a].solution_value() for a in Q}
+            return solver.Objective().Value(), {a : V[a].solution_value() for a in V}, {a : [Q[a].solution_value(), Q_seq[a].solution_value(), Q_par[a].solution_value()] for a in Q}
 
         else:
             print('The problem does not have an optimal solution.')

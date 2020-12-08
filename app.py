@@ -28,16 +28,20 @@ class App:
 
     # asks if the user will hold the number of cycles they currently recieve 
     # (from the last allocation) for the period starting at current_time
-    def will_hold(self, current_time):
+    def will_hold(self, current_time, period_length):
         if self.current_cycles == None:
             return False
 
-        # users have to choose whether to hold before seeing this period's demand, so estimate
+        # users have to choose whether to hold before seeing this period's demand/frac, 
+        # so estimate next period value with current alloc
         TRIALS = 100
-        expected_demand = 0
+        v = 0
         for i in range(TRIALS):
-            expected_demand += self.demand_func(current_time)
-        expected_demand /= TRIALS
+            d = self.demand_func(current_time)
+            f = self.parallel_func(current_time)
+            q = ((1-f) * self.current_cycles[1]) + (f * self.current_cycles[2]) 
+            v += self.sla.eval_exact_value(q, d) * (period_length / SLA.TIME_UNIT)
+        v /= TRIALS
 
-        surplus = self.sla.eval_exact_value(self.current_cycles, expected_demand) - self.current_price
+        surplus = v - self.current_price
         return surplus >= self.greedy_param

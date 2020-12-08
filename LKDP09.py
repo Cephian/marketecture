@@ -53,5 +53,5 @@ if __name__ == '__main__':
     for i in range(2):
         print(market.get_allocation_and_prices(False, True))
         for app_id, app in applications.items():
-            print(app_id, app.current_cycles, app.current_price)        
+            print(app_id, app.current_cycles[0], app.current_price)        
 

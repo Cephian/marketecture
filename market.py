@@ -144,9 +144,6 @@ class Market:
             Q_par[a] = solver.NumVar(0, infinity, f'Q_par[{a}]')
     
             # set measured application demand for A
-            A.parallel_fraction = 1 / random.choice([1, 2, 10, 20, 30, 35, 70])
-            assert (0 <= A.parallel_fraction) and (A.parallel_fraction <= 1), \
-                'Parallel fraction of application must be in the interval [0, 1].'
             A.sla.compute_supply_value(A.current_demand, self.period_length)
     
             # auxiliary for computing V = F(Q)
@@ -204,7 +201,7 @@ class Market:
                 for g, f, t in product(range(self.G), range(self.M), range(self.M))
             ) == Q_par[a])
             
-            # set number of cycles provided (approximate Amdahl harmonic mean with arithmetic mean)
+            # set number of cycles provided
             solver.Add(sum(
                 (1 - A.parallel_fraction) * Q_seq[a] + A.parallel_fraction * Q_par[a]
                 for g, f, t in product(range(self.G), range(self.M), range(self.M))

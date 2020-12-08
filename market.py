@@ -5,64 +5,111 @@ import random
 from itertools import product
 from ortools.linear_solver import pywraplp
 
+
 class Market:
-    # TODO use a dictionary for params instead?
-    def __init__(self, apps, G, M, CORES, MACHINES, gamma, delta, period_length=10):
-        self.G = G # number machine groups
-        self.M = M # number power modes, TODO change to be diff per group
-        self.CORES = CORES # number cores per machine in each group, TODO change to be diff per group
-        self.MACHINES = MACHINES # number total machines in each group, TODO change to be diff per group
-        self.gamma = gamma
-        self.delta = delta
-        self.period_length = period_length
-
+    def __init__(self, apps):
         self.apps = apps
-        self.current_time = 0
-        self.set_demands()
 
+        self.period_length =  10 # length of period (minutes)
+
+        ### CORE PARAMETERS
+        self.G = 2 # number machine groups
+        self.M = 3 # number power modes
+        self.MACHINES = [100, 100] # number total machines in each group
+        self.CORES = [4, 16] # number cores per machine in each group
+        self.cycles_per_transaction = 300 # MCycles per transaction
+        
+        # cycles supplied by cores (MCycles / minute)
+        self.gamma = lambda g, t : [
+            [0, 1.25, 2.5],
+            [0, 0.8, 1.6]
+        ][g][t] * 1000 * 60
+        # time to switch power modes (minutes)
+        self.delta = lambda g, f, t : [
+            [0, 4, 8],
+            [3, 0, 4],
+            [6, 3, 0]
+        ][f][t] / 60
+
+        self.E_mult = 1.6
+        self.E_cost = .07 / (1000 * 60) # cost per unit energy ($ / (W * min))
+        self.E_base_active = lambda g, tau, t : [25, 65, 65][t] * tau # energy used for platform (W * min)
+        self.E_core_active = lambda g, tau, t : [ # marginal energy for core (W * min)
+            [0, 7.8, 15.6],
+            [0, 0.8, 1.6]
+        ][g][t] * tau
+        self.E_trans = lambda g, f, t : [ # energy used for transition (W * min), chosen arbitrarily
+            [0, 0.5, 1],
+            [0.5, 0, 0.5],
+            [1, 0.5, 0]
+        ][f][t]
+        self.H_trans = lambda g, f, t : .0001 # cost of transitioning ($), chosen arbitrarily
+        self.H_base = lambda g, tau, t : .0001 * tau # cost of maintainting machine ($), chosen arbitrarily
+
+        self.current_time = 0 # start time of the next allocation period
+
+        # allocation from the last completed period
         self.current_core_allocation = { app_id : { (g,f) : 0 for g, f in product(range(self.G), range(self.M)) } for app_id in self.apps }
-        self.current_unsold_cores = { (g,f) : (0 if f != 0 else self.CORES * self.MACHINES) for g, f in product(range(self.G), range(self.M)) }
+        self.current_unsold_cores = { (g,f) : (0 if f != 0 else self.CORES[g] * self.MACHINES[g]) for g, f in product(range(self.G), range(self.M)) }
 
-    # use to advance the time to the next period
-    def advance_time(self):
-        self.current_time += self.period_length
-        self.set_demands()
+        # temp variables for storage
+        self.saved_core_allocation = None
+        self.saved_unsold_cores = None
 
-    def set_demands(self):
+
+    '''
+    Runs the allocation for the period starting at current_time.
+    Effects:
+        - Updates current_core_allocation, current_unsold_cores, current_time, and each app's current price/cycles
+        - Returns welfare of this period's allocation, user values, VCG prices
+    Inputs:
+        - use_VCG_price : bool or list; Indicates which apps should pay the VCG price (True = all, False = none)
+        - allow_holding : bool; Indicates whether apps can choose to hold their cores from last period (done greedily by the app)
+    '''
+    def get_allocation_and_prices(self, use_VCG_price=False, allow_holding=False):
+        # see if each user will hold their last period allocation
+        holding=[]
+        for app_id, app in self.apps.items():
+            if allow_holding and app.will_hold(self.current_time):
+                holding.append(app_id)
+
+        # realize the demands for the current time
         for app in self.apps.values():
             app.set_demand(self.current_time)
 
-    # use to get the allocation and prices for the next period
-    # use_VCG_price is either true, false or a list of users who should use strategic pricing
-    def get_allocation_and_prices(self, use_VCG_price=False, allow_holding=False):
-        holding=[]
-        for app_id, app in self.apps.items():
-            if allow_holding and app.will_hold(self.current_time + self.period_length):
-                holding.append(app_id)
-        print('holding', holding)
-
+        # run the actual allocation and calculate VCG pricing
         VCG = {}
-        total_welfare, total_values = self.allocate_all_apps(holding)
+        total_welfare, total_values, total_cycles = self.allocate_all_apps(holding)
         for app_id in self.apps:
-            welfare, values = self.allocate_without_app(app_id, holding)
+            welfare, _, _ = self.allocate_without_app(app_id, holding)
             price = welfare - (total_welfare - total_values[app_id])
             VCG[app_id] = price
 
+        # store price and allocated cycles in each app
         for app_id in self.apps:
-            if app_id in holding: # don't change price if holding
+            if app_id in holding: # don't change price or alloc if holding
                 continue
             if (type(use_VCG_price) == bool and use_VCG_price) or (type(use_VCG_price) != bool and app_id in use_VCG_price):
                 self.apps[app_id].current_price = VCG[app_id]
             else:
                 self.apps[app_id].current_price = total_values[app_id]
+            self.apps[app_id].current_cycles = total_cycles[app_id]
 
+        # finalize current allocation in the datacenter
+        self.current_core_allocation = self.saved_core_allocation
+        self.current_unsold_cores = self.saved_unsold_cores
+        self.saved_core_allocation = None
+        self.saved_unsold_cores = None
+
+        # advance the time to next period
+        self.current_time += self.period_length
+        
         return total_welfare, total_values, VCG
 
     def allocate_all_apps(self, holding=[]):
         return self.market_allocate(True, [], holding)
 
     def allocate_without_app(self, id_to_exclude, holding=[]):
-        #{app_id : app for app_id, app in self.apps.items() if app_id != id_to_exclude}
         return self.market_allocate(False, [id_to_exclude], holding)
 
     def market_allocate(self, save_alloc=False, exclude_from_obj=[], holding=[]):
@@ -73,14 +120,15 @@ class Market:
         C_current = {}
         for g, f in product(range(self.G), range(self.M)):
             C_current[(g, f)] = sum([self.current_core_allocation[app_id][(g, f)] for app_id in self.apps]) + self.current_unsold_cores[(g, f)]
+
     
         #############################################
         # Define MIP
         #############################################
     
         # buyer valuation model
-        V = {} # value provided to application a V = F(Q)
-        Q = {} # cycles provided to application a
+        V = {} # value provided to application a V = F(Q) ($)
+        Q = {} # cycles provided to application a (MCycles)
         Z_seg = {} # segment indicator for piecewise linear function
         Q_seg = {} # segment value for piecewise linear function
         C_sold = {}
@@ -91,14 +139,13 @@ class Market:
             Q[a] = solver.NumVar(0, infinity, f'Q[{a}]')
     
             # set measured application demand for A
-            #A.demand_estimate = random.choice([2, 10, 20, 30, 35, 70])
             A.sla.compute_supply_value(A.current_demand, self.period_length)
     
             # auxiliary for computing V = F(Q)
             Z_seg[a] = {}
             Q_seg[a] = {}
-            x_prev = lambda s : 0 if s == 0 else A.sla.supply_x[s-1]
-            x_curr = lambda s : A.sla.supply_x[s]
+            x_prev = lambda s : 0 if s == 0 else A.sla.supply_x[s-1] * self.cycles_per_transaction * self.period_length
+            x_curr = lambda s : A.sla.supply_x[s] * self.cycles_per_transaction * self.period_length
             y_prev = lambda s : 0 if s == 0 else A.sla.value_y[s-1]
             y_curr = lambda s : A.sla.value_y[s]
             # iterate over segments
@@ -142,19 +189,19 @@ class Market:
     
         for g, t in product(range(self.G), range(self.M)):
             solver.Add(
-                sum(self.CORES * M_sold[(g,f,t)] for f in range(self.M)) == 
+                sum(self.CORES[g] * M_sold[(g,f,t)] for f in range(self.M)) == 
                 sum(
                     C_sold[a][(g,f,t)] 
                     for a, f in product(self.apps.keys(), range(self.M))
                 ) + C_partunsold[(g,t)]
             )
             solver.Add(
-                sum(self.CORES * M_unsold[(g,f,t)] for f in range(self.M)) == 
-                sum(C_unsold[(g,f,t)] for f in range(self.M)) - C_partunsold[(g,t)] # CHECK changed + to - here?
+                sum(self.CORES[g] * M_unsold[(g,f,t)] for f in range(self.M)) == 
+                sum(C_unsold[(g,f,t)] for f in range(self.M)) - C_partunsold[(g,t)]
             )
         for g in range(self.G):
             solver.Add(
-                self.MACHINES == sum(
+                self.MACHINES[g] == sum(
                     M_sold[(g,f,t)] + M_unsold[(g,f,t)]
                     for f, t in product(range(self.M), range(self.M))
                 )
@@ -176,25 +223,19 @@ class Market:
         # seller cost model
         E_sold = solver.NumVar(0, infinity, 'E_sold')
         H_sold = solver.NumVar(0, infinity, 'H_sold')
-        E_mult = 2
-        E_trans = lambda g, f, t : 0 if f == t else 1 + g
-        E_base_active = lambda g, tau, t : 0.1 * t * tau
-        E_core_active = lambda g, tau, t : 0.7 * t * tau
-        H_trans = lambda g, f, t : 0 if f == t else 1 + g
-        H_base_active = lambda g, tau, t : 0.1 * t * tau
         solver.Add(
             E_sold == sum(
-                E_mult * (E_trans(g,f,t) + E_base_active(g, self.period_length, t)) * 
+                self.E_mult * (self.E_trans(g,f,t) + self.E_base_active(g, self.period_length, t)) * 
                 M_sold[(g,f,t)]
                 for g, f, t in product(range(self.G), range(self.M), range(self.M)) 
             ) + sum(
-                E_mult * E_core_active(g, self.period_length, t) * C_sold[a][(g,f,t)]
+                self.E_mult * self.E_core_active(g, self.period_length, t) * C_sold[a][(g,f,t)]
                 for a, g, f, t in product(self.apps.keys(), range(self.G), range(self.M), range(self.M)) 
             )
         )
         solver.Add(
             H_sold == sum(
-                (H_trans(g,f,t) + H_base_active(g, self.period_length, t)) * M_sold[(g,f,t)]
+                (self.H_trans(g,f,t) + self.H_base(g, self.period_length, t)) * M_sold[(g,f,t)]
                 for g, f, t in product(range(self.G), range(self.M), range(self.M))
             )
         )
@@ -202,8 +243,9 @@ class Market:
         #print('Number of variables =', solver.NumVariables())
         #print('Number of constraints =', solver.NumConstraints())
     
+        # objective ($)
         solver.Maximize(
-            sum(V[a] for a in self.apps.keys() if a not in exclude_from_obj) - E_sold - H_sold
+            sum(V[a] for a in self.apps.keys() if a not in exclude_from_obj) - (self.E_cost * E_sold) - H_sold
         )
     
         status = solver.Solve()
@@ -212,12 +254,12 @@ class Market:
             #print('Solution:')
             #print('Objective value =', solver.Objective().Value())
             if save_alloc:
+                self.saved_core_allocation = { a : {} for a in self.apps.keys() }
+                self.saved_unsold_cores = {}
                 for a, g, t in product(self.apps.keys(), range(self.G), range(self.M)): # will need to change for core holding
-                    self.current_core_allocation[a][(g,t)] = sum([C_sold[a][(g,f,t)].solution_value() for f in range(self.M)])
-                    self.current_unsold_cores[(g,t)] = sum([C_unsold[(g,f,t)].solution_value() for f in range(self.M)])
-                for a, app in self.apps.items():
-                    app.current_cycles = Q[a].solution_value()
+                    self.saved_core_allocation[a][(g,t)] = sum([C_sold[a][(g,f,t)].solution_value() for f in range(self.M)])
+                    self.saved_unsold_cores[(g,t)] = sum([C_unsold[(g,f,t)].solution_value() for f in range(self.M)])
+            return solver.Objective().Value(), {a : V[a].solution_value() for a in V}, {a : Q[a].solution_value() for a in Q}
 
-            return solver.Objective().Value(), {a : V[a].solution_value() for a in V}
         else:
             print('The problem does not have an optimal solution.')

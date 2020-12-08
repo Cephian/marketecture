@@ -6,9 +6,11 @@ class SLA:
     '''
     Piecewise linear function representing the value for the Pth
     percentile response time.
+    Value is in units of dollars per 10 minutes
     '''
     P = 0.95
-    MONTH = 60 * 24 * 30 # minutes in 30 days
+    #MONTH = 60 * 24 * 30 # minutes in 30 days
+    TIME_UNIT = 10
 
     def __init__(self, endpoints: List[Tuple[float, float]]):
         x = [p[0] for p in endpoints]
@@ -37,11 +39,14 @@ class SLA:
         return y[i-1] + m * (t - x[i-1])
 
     def eval_sla(self, response_time: float):
+        # response_time (sec) -> value ($ / 10 min)
         return SLA.eval_piecewise(self.x, self.y, response_time)
 
     def eval_exact_value(self, supply: float, demand: float):
         '''
         Value without piecewise linear approximation
+
+        supply (transactions / min) * demand (transactions / min) -> value ($ / 10 min)
         '''
         if supply <= demand:
             return 0
@@ -51,6 +56,8 @@ class SLA:
     def eval_value(self, supply: float, demand: float):
         '''
         Value with piecewise linear approximation
+
+        Units as above
         '''
         if supply <= demand:
             return 0
@@ -75,12 +82,17 @@ class SLA:
         plt.clf()
 
     def compute_supply_value(self, demand: float, period_length):
+        '''
+        Takes in demand (transactions / min)
+        
+        Sets members representing a function: supply (transactions / min) -> value ($ / period)
+        '''
         self.supply_x = [
             np.inf if xi == 0 else (-np.log(1 - SLA.P) + xi * demand) / xi
             for xi in self.x
         ][::-1]
         self.value_y = [
-            self.eval_exact_value(s, demand) * period_length / SLA.MONTH
+            self.eval_exact_value(s, demand) * period_length / SLA.TIME_UNIT
             for s in self.supply_x
         ]
 

@@ -13,38 +13,41 @@ class Market:
         self.period_length =  10 # length of period (minutes)
 
         ### CORE PARAMETERS
-        self.G = 2 # number machine groups
-        self.M = 3 # number power modes
-        self.MACHINES = [100, 100] # number total machines in each group
-        self.CORES = [4, 16] # number cores per machine in each group
+        # This market contains only Xeon cores with 2 power modes,
+        # using data from Guevara.
+        # mode 0 = sleep, mode 1 = active
+        self.G = 1 # number machine groups
+        self.M = 2 # number power modes
+        self.MACHINES = [100] # number total machines in each group
+        self.CORES = [4] # number cores per machine in each group
         self.cycles_per_transaction = 300 # MCycles per transaction
         
         # cycles supplied by cores (MCycles / minute)
         self.gamma = lambda g, t : [
-            [0, 1.25, 2.5],
-            [0, 0.8, 1.6]
+            [0, 2.5]
         ][g][t] * 1000 * 60
         # time to switch power modes (minutes)
         self.delta = lambda g, f, t : [
-            [0, 4, 8],
-            [3, 0, 4],
-            [6, 3, 0]
+            [0, 8],
+            [6, 0]
         ][f][t] / 60
 
         self.E_mult = 1.6
         self.E_cost = .07 / (1000 * 60) # cost per unit energy ($ / (W * min))
-        self.E_base_active = lambda g, tau, t : [25, 65, 65][t] * tau # energy used for platform (W * min)
+        self.E_base_active = lambda g, tau, t : [25, 65][t] * tau # energy used for platform (W * min)
+        self.E_base_idle = lambda g, tau, t : [25, 65][t] * tau # energy used for unsold platforms (W * min)
+        self.E_trans = lambda g, f, t : [ # energy used for transition for each machine (W * min)
+            [0, 65],
+            [65, 0]
+        ][f][t] * self.delta(g, f, t)
         self.E_core_active = lambda g, tau, t : [ # marginal energy for core (W * min)
-            [0, 7.8, 15.6],
-            [0, 0.8, 1.6]
+            [0, 15.6]
         ][g][t] * tau
-        self.E_trans = lambda g, f, t : [ # energy used for transition (W * min), chosen arbitrarily
-            [0, 0.5, 1],
-            [0.5, 0, 0.5],
-            [1, 0.5, 0]
-        ][f][t]
-        self.H_trans = lambda g, f, t : .0001 # cost of transitioning ($), chosen arbitrarily
-        self.H_base = lambda g, tau, t : .0001 * tau # cost of maintainting machine ($), chosen arbitrarily
+        self.E_core_idle = lambda g, tau, t : [ # marginal energy for unsold cores (W * min)
+            [0, 7.8]
+        ][g][t] * tau
+        self.H_trans = lambda g, f, t : 0 if f == t else .05 # cost of transitioning ($)
+        self.H_base = lambda g, tau, t : 0 if t == 0 else .0001 * tau # cost of maintainting machine ($), chosen arbitrarily
 
         self.current_time = 0 # start time of the next allocation period
 
@@ -251,21 +254,28 @@ class Market:
 
     
         # seller cost model
-        E_sold = solver.NumVar(0, infinity, 'E_sold')
-        H_sold = solver.NumVar(0, infinity, 'H_sold')
+        E = solver.NumVar(0, infinity, 'E')
+        H = solver.NumVar(0, infinity, 'H')
         solver.Add(
-            E_sold == sum(
+            E == sum(
                 self.E_mult * (self.E_trans(g,f,t) + self.E_base_active(g, self.period_length, t)) * 
                 M_sold[(g,f,t)]
                 for g, f, t in product(range(self.G), range(self.M), range(self.M)) 
             ) + sum(
                 self.E_mult * self.E_core_active(g, self.period_length, t) * C_sold[a][(g,f,t)]
                 for a, g, f, t in product(self.apps.keys(), range(self.G), range(self.M), range(self.M)) 
+            ) + sum(
+                self.E_mult * (self.E_trans(g,f,t) + self.E_base_idle(g, self.period_length, t)) *
+                M_unsold[(g,f,t)]
+                for g, f, t in product(range(self.G), range(self.M), range(self.M))
+            ) + sum(
+                self.E_mult * self.E_core_idle(g, self.period_length, t) * C_unsold[(g,f,t)]
+                for g,f,t in product(range(self.G), range(self.M), range(self.M))
             )
         )
         solver.Add(
-            H_sold == sum(
-                (self.H_trans(g,f,t) + self.H_base(g, self.period_length, t)) * M_sold[(g,f,t)]
+            H == sum(
+                (self.H_trans(g,f,t) + self.H_base(g, self.period_length, t)) * (M_sold[(g,f,t)] + M_unsold[(g,f,t)])
                 for g, f, t in product(range(self.G), range(self.M), range(self.M))
             )
         )
@@ -275,7 +285,7 @@ class Market:
     
         # objective ($)
         solver.Maximize(
-            sum(V[a] for a in self.apps.keys() if a not in exclude_from_obj) - (self.E_cost * E_sold) - H_sold
+            sum(V[a] for a in self.apps.keys() if a not in exclude_from_obj) - (self.E_cost * E) - H
         )
     
         status = solver.Solve()
@@ -286,7 +296,7 @@ class Market:
             if save_alloc:
                 self.saved_core_allocation = { a : {} for a in self.apps.keys() }
                 self.saved_unsold_cores = {}
-                for a, g, t in product(self.apps.keys(), range(self.G), range(self.M)): # will need to change for core holding
+                for a, g, t in product(self.apps.keys(), range(self.G), range(self.M)):
                     self.saved_core_allocation[a][(g,t)] = sum([C_sold[a][(g,f,t)].solution_value() for f in range(self.M)])
                     self.saved_unsold_cores[(g,t)] = sum([C_unsold[(g,f,t)].solution_value() for f in range(self.M)])
             return solver.Objective().Value(), {a : V[a].solution_value() for a in V}, {a : [Q[a].solution_value(), Q_seq[a].solution_value(), Q_par[a].solution_value()] for a in Q}

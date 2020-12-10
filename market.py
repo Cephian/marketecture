@@ -185,6 +185,7 @@ class Market:
 
                 # need to have bought sequential core
                 solver.Add(C_sold_seq[a][(g,f,t)] <= C_sold[a][(g,f,t)])
+            #solver.Add(C_sold[0][(0,0,1)] == 4)
 
             # each application can use at most one core sequentially
             solver.Add(sum(
@@ -205,10 +206,9 @@ class Market:
             ) == Q_par[a])
             
             # set number of cycles provided
-            solver.Add(sum(
+            solver.Add(
                 (1 - A.parallel_fraction) * Q_seq[a] + A.parallel_fraction * Q_par[a]
-                for g, f, t in product(range(self.G), range(self.M), range(self.M))
-            ) == Q[a])
+            == Q[a])
     
         # goods in the market
         M_sold = {}
@@ -289,7 +289,9 @@ class Market:
         )
     
         status = solver.Solve()
-    
+
+        #print(self.apps[0].sla.eval_value(Q[0].solution_value() / (self.period_length * self.cycles_per_transaction), self.apps[0].current_demand))
+   
         if status == pywraplp.Solver.OPTIMAL:
             #print('Solution:')
             #print('Objective value =', solver.Objective().Value())

@@ -29,19 +29,20 @@ import random
 # endpoints encoding SLAs
 endpoints = [
     [
-        (0, 5), (0.05, 5), (0.1, 4.5), (0.5, 2), (1, 0)
+        (0, 100), (0.000001, 100), (0.5, 5), (1, 0)
     ],
     [
-        (0, 4.5), (0.05, 4.5), (0.1, 3.5), (0.5, 1.5), (1, 0)
+        (0, 50), (0.00001, 50), (0.1, 0),
     ],
 ]
 # array of SLA ids
 sla_ids = [
-    0, 0, 1, 1,
+    0, 1,
 ]
 
 # demand function from time to transactions/min demanded
-df = lambda t : random.choice([2, 10, 20, 30, 35, 70])
+df = lambda t: 10000#lambda t : random.choice([2, 10, 20, 30, 35, 70])
+# so each period 30000 MCYcles at least needed
 
 # array of applications
 applications = {
@@ -51,7 +52,8 @@ applications = {
 if __name__ == '__main__':
     market = Market(applications)
     for i in range(2):
-        print(market.get_allocation_and_prices(False, True))
+        print(market.get_allocation_and_prices(False, False))
+        print('allocation:', market.current_core_allocation, market.current_unsold_cores)
         for app_id, app in applications.items():
-            print(app_id, app.current_cycles[0], app.current_price)        
+            print(app_id, app.current_cycles, app.current_price)        
 

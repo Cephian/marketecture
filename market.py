@@ -18,7 +18,7 @@ class Market:
         # mode 0 = sleep, mode 1 = active
         self.G = 1 # number machine groups
         self.M = 2 # number power modes
-        self.MACHINES = [100] # number total machines in each group
+        self.MACHINES = [15] # number total machines in each group
         self.CORES = [4] # number cores per machine in each group
         self.cycles_per_transaction = 300 # MCycles per transaction
         

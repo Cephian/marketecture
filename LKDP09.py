@@ -20,6 +20,7 @@ from sla import SLA
 from app import App
 from market import Market
 from math import log
+from math import atan
 import numpy as np
 import random
 
@@ -27,6 +28,13 @@ import random
 # Input Data
 #############################################
 
+# number of applications/users
+num_apps = 5
+
+# number of allocationrounds to run
+num_rounds = 8
+
+# different unscaled value functions
 def f1(x):
     if x < 0.000001:
         x = 0.000001
@@ -38,61 +46,37 @@ def f2(x):
     return -log(x)
 
 def f3(x):
-    if x < 0.000001:
-        x = 0.000001
     return 1-x**2
 
-# endpoints encoding SLAs
-#endpoints = [
-#    [
-#        (0, 100), (0.00001, 100), (0.5, 5), (1, 0)
-#    ],
-#    [
-#        (0, 50), (0.00001, 50), (0.1, 0),
-#    ],
-#]
+def f3(x):
+    return (atan(4*(1-x)-2) / atan(2))+1
 
-L = [0, 0.00001, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]
-endpoints = [
-    [
-        (x, f1(x)) for x in L
-    ],
-    [
-        
-        (x, f2(x)) for x in L
-    ],
-    [
-        
-        (x, f3(x)) for x in L
-    ],
-    [
-        
-        (x, f1(x)**2) for x in L
-    ],
-]
-
-# array of SLA ids
-sla_ids = [
-    2, 2, 2, 2
-]
+def rand_sla():
+	c = random.uniform(0.5, 2)
+	L = [x*0.1 for x in range(11)] + [0.25*2**(-x) for x in range(10)]
+	L = sorted(set(L))
+	return [(x, f3(x) * c) for x in L]
 
 # demand function from time to transactions/min demanded
-df = lambda t: 1000*t#lambda t : random.choice([2, 10, 20, 30, 35, 70])
-# so each period 30000 MCYcles at least needed
+df = lambda t : random.randrange(00000, 50000)
 
 # array of applications
 applications = {
-        app_id : App(SLA(endpoints[sla_ids[app_id]]), df) for app_id in range(len(sla_ids))
+		app_id : App(SLA(rand_sla()), df) for app_id in range(num_apps)
 }
 
 if __name__ == '__main__':
     market = Market(applications)
-    for i in range(5):
-        total_welfare, total_values, VCG = market.get_allocation_and_prices(False, False)
-        #print(market.get_allocation_and_prices(False, False))
-        #print('allocation:', market.current_core_allocation, market.current_unsold_cores)
+    for i in range(num_rounds):
+        print('--- round ', i,'---')
         print()
+        total_welfare, total_values, VCG = market.get_allocation_and_prices(False, False)
+        print('total welfare:', total_welfare)
         for app_id, app in applications.items():
-            print(app_id, app.current_cycles, app.current_price)        
+            print('application', app_id)
+            print('  cycles:', app.current_cycles[0])
+            print('  VCG price:', VCG[app_id])
+            print('  value:', total_values[app_id])
+        print()
 
 
